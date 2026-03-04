@@ -451,14 +451,24 @@ def _parse_sheet(raw, sheet_name):
 # ──────────────────────────────────────────────
 # Helpers de filtro – clampar valores em session_state
 # ──────────────────────────────────────────────
-def _init_or_clamp_multiselect(key, valid_options):
-    """Inicializa ou clampa multiselect na session_state."""
+def _sync_multiselect(key, valid_options):
+    """Sincroniza multiselect: remove inválidos e adiciona opções novas."""
+    valid_set = set(valid_options)
+    prev_key = f"_prev_opts_{key}"
+
     if key not in st.session_state:
+        # Primeira vez: selecionar tudo
         st.session_state[key] = list(valid_options)
     else:
-        clamped = [v for v in st.session_state[key] if v in valid_options]
-        if clamped != list(st.session_state[key]):
-            st.session_state[key] = clamped
+        prev_opts = set(st.session_state.get(prev_key, []))
+        new_opts = valid_set - prev_opts          # opções que acabaram de surgir
+        current = st.session_state[key]
+        # Manter somente os válidos + adicionar os novos
+        updated = [v for v in current if v in valid_set] + sorted(new_opts)
+        st.session_state[key] = updated
+
+    # Salvar opções atuais para comparar no próximo ciclo
+    st.session_state[prev_key] = list(valid_options)
 
 
 def _init_or_clamp_date(key, default_val, d_min, d_max):
@@ -481,7 +491,7 @@ def render_home(all_data):
 
         # ── Ano ──
         all_anos = sorted(set(a for df in all_data.values() for a in df["Ano"].unique()))
-        _init_or_clamp_multiselect("home_ano", all_anos)
+        _sync_multiselect("home_ano", all_anos)
         sel_anos = st.multiselect("Ano", all_anos, key="home_ano")
         if not sel_anos:
             sel_anos = all_anos
@@ -491,7 +501,7 @@ def render_home(all_data):
             m for df in all_data.values()
             for m in df[df["Ano"].isin(sel_anos)]["Mes"].unique()
         ))
-        _init_or_clamp_multiselect("home_mes", all_meses)
+        _sync_multiselect("home_mes", all_meses)
         sel_meses = st.multiselect(
             "Mês", all_meses,
             format_func=lambda m: MESES_NOME[m],
