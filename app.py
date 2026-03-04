@@ -449,36 +449,18 @@ def _parse_sheet(raw, sheet_name):
 
 
 # ──────────────────────────────────────────────
-# Helpers de filtro – clampar valores em session_state
+# Callbacks de filtro – cascata Ano → Mês → Datas
 # ──────────────────────────────────────────────
-def _sync_multiselect(key, valid_options):
-    """Sincroniza multiselect: remove inválidos e adiciona opções novas."""
-    valid_set = set(valid_options)
-    prev_key = f"_prev_opts_{key}"
-
-    if key not in st.session_state:
-        # Primeira vez: selecionar tudo
-        st.session_state[key] = list(valid_options)
-    else:
-        prev_opts = set(st.session_state.get(prev_key, []))
-        new_opts = valid_set - prev_opts          # opções que acabaram de surgir
-        current = st.session_state[key]
-        # Manter somente os válidos + adicionar os novos
-        updated = [v for v in current if v in valid_set] + sorted(new_opts)
-        st.session_state[key] = updated
-
-    # Salvar opções atuais para comparar no próximo ciclo
-    st.session_state[prev_key] = list(valid_options)
+def _on_home_ano_change():
+    """Ao alterar anos, resetar meses e datas."""
+    for k in ("home_mes", "home_dia", "home_ini", "home_fim"):
+        st.session_state.pop(k, None)
 
 
-def _init_or_clamp_date(key, default_val, d_min, d_max):
-    """Inicializa ou clampa date_input na session_state."""
-    if key not in st.session_state:
-        st.session_state[key] = default_val
-    else:
-        v = st.session_state[key]
-        if v < d_min or v > d_max:
-            st.session_state[key] = max(d_min, min(v, d_max))
+def _on_home_mes_change():
+    """Ao alterar meses, resetar datas."""
+    for k in ("home_dia", "home_ini", "home_fim"):
+        st.session_state.pop(k, None)
 
 
 # ──────────────────────────────────────────────
@@ -491,8 +473,10 @@ def render_home(all_data):
 
         # ── Ano ──
         all_anos = sorted(set(a for df in all_data.values() for a in df["Ano"].unique()))
-        _sync_multiselect("home_ano", all_anos)
-        sel_anos = st.multiselect("Ano", all_anos, key="home_ano")
+        if "home_ano" not in st.session_state:
+            st.session_state["home_ano"] = list(all_anos)
+        sel_anos = st.multiselect("Ano", all_anos, key="home_ano",
+                                   on_change=_on_home_ano_change)
         if not sel_anos:
             sel_anos = all_anos
 
@@ -501,11 +485,19 @@ def render_home(all_data):
             m for df in all_data.values()
             for m in df[df["Ano"].isin(sel_anos)]["Mes"].unique()
         ))
-        _sync_multiselect("home_mes", all_meses)
+        if "home_mes" not in st.session_state:
+            st.session_state["home_mes"] = list(all_meses)
+        else:
+            # Remover meses que não existem mais para os anos selecionados
+            valid_set = set(all_meses)
+            st.session_state["home_mes"] = [
+                m for m in st.session_state["home_mes"] if m in valid_set
+            ]
         sel_meses = st.multiselect(
             "Mês", all_meses,
             format_func=lambda m: MESES_NOME[m],
             key="home_mes",
+            on_change=_on_home_mes_change,
         )
         if not sel_meses:
             sel_meses = all_meses
@@ -527,10 +519,16 @@ def render_home(all_data):
             d_min = all_datas.min().date()
             d_max = all_datas.max().date()
 
-        # Clampar datas em session_state ao range válido
-        _init_or_clamp_date("home_dia", d_max, d_min, d_max)
-        _init_or_clamp_date("home_ini", d_min, d_min, d_max)
-        _init_or_clamp_date("home_fim", d_max, d_min, d_max)
+        # Inicializar / clampar datas ao range válido
+        for _k, _def in [("home_dia", d_max), ("home_ini", d_min), ("home_fim", d_max)]:
+            if _k not in st.session_state:
+                st.session_state[_k] = _def
+            else:
+                _v = st.session_state[_k]
+                if _v < d_min:
+                    st.session_state[_k] = d_min
+                elif _v > d_max:
+                    st.session_state[_k] = d_max
 
         if modo == "Um dia":
             dia_sel = st.date_input(
