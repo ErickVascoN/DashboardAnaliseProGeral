@@ -454,20 +454,26 @@ def _parse_sheet(raw, sheet_name):
 def _on_home_ano_change():
     """Reseta meses e datas ao mudar anos."""
     for k in ("home_mes", "home_ini", "home_fim", "home_dia",
-              "_home_date_range", "_home_prev_meses"):
+              "_home_date_range"):
         st.session_state.pop(k, None)
+    st.session_state["_home_needs_rerun"] = True
 
 
 def _on_home_mes_change():
     """Reseta datas ao mudar meses."""
     for k in ("home_ini", "home_fim", "home_dia", "_home_date_range"):
         st.session_state.pop(k, None)
+    st.session_state["_home_needs_rerun"] = True
 
 
 # ──────────────────────────────────────────────
 # TELA INICIAL (HOME)
 # ──────────────────────────────────────────────
 def render_home(all_data):
+    # Forçar rerun limpo quando filtros dependentes foram resetados
+    if st.session_state.pop("_home_needs_rerun", False):
+        st.rerun()
+
     # -- Sidebar: filtros de data --
     with st.sidebar:
         st.markdown("### Filtros")
