@@ -449,6 +449,22 @@ def _parse_sheet(raw, sheet_name):
 
 
 # ──────────────────────────────────────────────
+# Callbacks de filtro (home)
+# ──────────────────────────────────────────────
+def _on_home_ano_change():
+    """Reseta meses e datas ao mudar anos."""
+    for k in ("home_mes", "home_ini", "home_fim", "home_dia",
+              "_home_date_range", "_home_prev_meses"):
+        st.session_state.pop(k, None)
+
+
+def _on_home_mes_change():
+    """Reseta datas ao mudar meses."""
+    for k in ("home_ini", "home_fim", "home_dia", "_home_date_range"):
+        st.session_state.pop(k, None)
+
+
+# ──────────────────────────────────────────────
 # TELA INICIAL (HOME)
 # ──────────────────────────────────────────────
 def render_home(all_data):
@@ -458,17 +474,12 @@ def render_home(all_data):
 
         # Coletar todos os anos e meses disponiveis
         all_anos = sorted(set(a for df in all_data.values() for a in df["Ano"].unique()))
-        sel_anos = st.multiselect("Ano", all_anos, default=all_anos, key="home_ano")
+        sel_anos = st.multiselect(
+            "Ano", all_anos, default=all_anos,
+            key="home_ano", on_change=_on_home_ano_change,
+        )
         if not sel_anos:
             sel_anos = all_anos
-
-        # Resetar meses e datas quando a selecao de anos muda
-        prev_anos = st.session_state.get("_home_prev_anos", None)
-        if prev_anos is not None and set(prev_anos) != set(sel_anos):
-            for k in ("home_mes", "home_ini", "home_fim", "home_dia", "_home_date_range"):
-                if k in st.session_state:
-                    del st.session_state[k]
-        st.session_state["_home_prev_anos"] = list(sel_anos)
 
         all_meses = sorted(set(
             m for df in all_data.values()
@@ -477,18 +488,10 @@ def render_home(all_data):
         sel_meses = st.multiselect(
             "Mês", all_meses, default=all_meses,
             format_func=lambda m: MESES_NOME[m],
-            key="home_mes",
+            key="home_mes", on_change=_on_home_mes_change,
         )
         if not sel_meses:
             sel_meses = all_meses
-
-        # Resetar datas quando a selecao de meses muda
-        prev_meses = st.session_state.get("_home_prev_meses", None)
-        if prev_meses is not None and set(prev_meses) != set(sel_meses):
-            for k in ("home_ini", "home_fim", "home_dia", "_home_date_range"):
-                if k in st.session_state:
-                    del st.session_state[k]
-        st.session_state["_home_prev_meses"] = list(sel_meses)
 
         # Filtro de periodo
         st.markdown("### Filtro de Dias")
