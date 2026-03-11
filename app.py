@@ -633,8 +633,8 @@ def render_home(all_data):
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Empresas Ativas", n_empresas)
-    m2.metric("Produção Total", _fmt_int(total_geral))
-    m3.metric("Média por Empresa", _fmt_int(total_geral / n_empresas) if n_empresas else "0")
+    m2.metric("Produção Total", f"{total_geral:,.0f}".replace(",", "."))
+    m3.metric("Média por Empresa", f"{total_geral / n_empresas:,.0f}".replace(",", ".") if n_empresas else "0")
     m4.metric("Dias com Registros", dias_total)
 
     if excluidas:
@@ -935,12 +935,12 @@ def render_company(empresa, df, all_data):
 
     # ── KPIs (6 cards) ──
     k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("Total Produzido", _fmt_int(prod_total))
-    k2.metric("Meta do Período", _fmt_int(meta_periodo) if tem_meta else "Sem meta")
+    k1.metric("Total Produzido", fmt_br(prod_total))
+    k2.metric("Meta do Período", fmt_br(meta_periodo) if tem_meta else "Sem meta")
     k3.metric(
         "Saldo",
-        _fmt_int(saldo) if tem_meta else "-",
-        delta=_fmt_int(saldo) if tem_meta else None,
+        fmt_br(saldo) if tem_meta else "-",
+        delta=fmt_br(saldo) if tem_meta else None,
         delta_color="normal" if tem_meta else "off",
     )
     k4.metric(
@@ -948,7 +948,7 @@ def render_company(empresa, df, all_data):
         f"{ating*100:.1f}%" if tem_meta else "-",
         delta=f"{(ating-1)*100:+.1f} pp" if tem_meta else None,
     )
-    k5.metric("Média / Dia", _fmt_int(media_dia))
+    k5.metric("Média / Dia", fmt_br(media_dia))
     k6.metric("Dias Úteis", str(d_uteis))
 
     if not tem_meta:
@@ -1092,13 +1092,7 @@ def render_company(empresa, df, all_data):
         tbl = tbl.sort_values("Ating. %", ascending=False)
 
         st.markdown("### Resumo por Facção")
-        def _fmt_int(v):
-            try:
-                if pd.isna(v):
-                    return "-"
-                return f"{int(v):,}".replace(",", ".")
-            except Exception:
-                return "-"
+        _fmt_int = lambda v: f"{v:,.0f}".replace(",", ".")
         tbl_display = tbl.rename(columns={"Faccao": "Facção", "Meta Periodo": "Meta Período", "Media/Dia": "Média/Dia"})
         st.dataframe(
             tbl_display.style.format({
