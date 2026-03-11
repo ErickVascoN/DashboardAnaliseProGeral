@@ -1092,7 +1092,13 @@ def render_company(empresa, df, all_data):
         tbl = tbl.sort_values("Ating. %", ascending=False)
 
         st.markdown("### Resumo por Facção")
-        _fmt_int = lambda v: f"{v:,.0f}".replace(",", ".")
+        def _fmt_int(v):
+            try:
+                if pd.isna(v):
+                    return "-"
+                return f"{int(v):,}".replace(",", ".")
+            except Exception:
+                return "-"
         tbl_display = tbl.rename(columns={"Faccao": "Facção", "Meta Periodo": "Meta Período", "Media/Dia": "Média/Dia"})
         st.dataframe(
             tbl_display.style.format({
