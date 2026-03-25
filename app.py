@@ -1093,6 +1093,16 @@ def render_company(empresa, df, all_data):
             Produzido=("Quantidade", "sum"),
             Dias=("Data", "nunique"),
         )
+
+        # ── Produtos por facção ──
+        produtos_por_faccao = (
+            df_f.groupby("Faccao")["Produto"]
+            .apply(lambda x: ", ".join(sorted(x.unique())))
+            .reset_index()
+            .rename(columns={"Produto": "Produtos"})
+        )
+        tbl = tbl.merge(produtos_por_faccao, on="Faccao", how="left")
+
         # ── Meta por facção vinda de _calc_meta (já correto por mês) ──
         _, _, meta_fac_df = _calc_meta(df_f, list(tbl["Faccao"].unique()))
         tbl = tbl.merge(meta_fac_df, on="Faccao", how="left")
@@ -1122,8 +1132,13 @@ def render_company(empresa, df, all_data):
         if meses_selecionados > 1:
             st.caption("ℹ️ **Meta Dia**: valor fixo quando igual em todos os meses selecionados; faixa *mín — máx* quando varia.")
         _fmt_int = lambda v: f"{v:,.0f}".replace(",", ".")
-        tbl_display = tbl[["Faccao","Produzido","Dias","Meta Dia","Meta Periodo","Ating. %","Saldo","Media/Dia"]].rename(columns={
-            "Faccao": "Facção", "Meta Periodo": "Meta Período", "Media/Dia": "Média/Dia"
+        tbl_display = tbl[[
+            "Faccao", "Produtos", "Produzido", "Dias",
+            "Meta Dia", "Meta Periodo", "Ating. %", "Saldo", "Media/Dia"
+        ]].rename(columns={
+            "Faccao": "Facção",
+            "Meta Periodo": "Meta Período",
+            "Media/Dia": "Média/Dia",
         })
         st.dataframe(
             tbl_display.style.format({
