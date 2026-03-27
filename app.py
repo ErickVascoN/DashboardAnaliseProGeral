@@ -140,16 +140,9 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
     """
     Calcula a meta do período considerando que cada mês pode ter
     uma meta diária diferente por facção/produto.
-
-    Retorna
-    -------
-    meta_periodo   : float  — total do período (soma de meta_dia × dias_úteis por mês)
-    meta_por_data  : pd.Series (index=Data) — meta diária variável por data (para gráfico)
-    meta_por_faccao: pd.DataFrame — colunas [Faccao, Meta Periodo, Meta Dia Min, Meta Dia Max]
     """
     df_sel = df_f[df_f["Faccao"].isin(sel_facs)].copy()
 
-    # Uma linha por (Faccao, Produto, Ano, Mes) — pega a meta daquele mês
     meta_mensal = (
         df_sel
         .drop_duplicates(subset=["Faccao", "Produto", "Ano", "Mes"])
@@ -162,7 +155,6 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
         empty = pd.DataFrame(columns=["Faccao", "Meta Periodo", "Meta Dia Min", "Meta Dia Max"])
         return 0.0, pd.Series(dtype=float), empty
 
-    # Dias úteis por (Ano, Mes) — conta apenas datas reais que existem nos dados
     dias_mes = (
         df_sel.groupby(["Ano", "Mes"])["Data"]
         .apply(dias_uteis)
@@ -174,10 +166,8 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
     meta_mensal["DiasUteis"] = meta_mensal["DiasUteis"].fillna(0)
     meta_mensal["Meta Periodo Mes"] = meta_mensal["Meta Diaria"] * meta_mensal["DiasUteis"]
 
-    # ── Meta total do período ──
     meta_periodo = float(meta_mensal["Meta Periodo Mes"].sum())
 
-    # ── Meta diária por data (cada data recebe a meta do seu mês) ──
     meta_por_anomes = (
         meta_mensal.groupby(["Ano", "Mes"], as_index=False)["Meta Diaria"].sum()
     )
@@ -189,10 +179,8 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
         .set_index("Data")["Meta Diaria"]
         .fillna(0)
     )
-    # Remover duplicatas de índice (mesma data pode aparecer para múltiplas facções)
     meta_por_data = meta_por_data[~meta_por_data.index.duplicated(keep="first")]
 
-    # ── Meta por facção: período + faixa de meta diária (min/max entre meses) ──
     meta_por_faccao = (
         meta_mensal
         .groupby("Faccao")
@@ -210,6 +198,49 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
     )
 
     return meta_periodo, meta_por_data, meta_por_faccao
+
+
+def _calc_meta_por_produto(df_f: pd.DataFrame, sel_facs: list) -> pd.DataFrame:
+    """
+    Calcula meta por (Faccao, Produto) para a tabela expandida.
+    """
+    df_sel = df_f[df_f["Faccao"].isin(sel_facs)].copy()
+
+    meta_mensal = (
+        df_sel
+        .drop_duplicates(subset=["Faccao", "Produto", "Ano", "Mes"])
+        [["Faccao", "Produto", "Ano", "Mes", "Meta Diaria"]]
+        .copy()
+    )
+    meta_mensal["Meta Diaria"] = meta_mensal["Meta Diaria"].fillna(0)
+
+    dias_mes = (
+        df_sel.groupby(["Ano", "Mes"])["Data"]
+        .apply(dias_uteis)
+        .reset_index()
+        .rename(columns={"Data": "DiasUteis"})
+    )
+
+    meta_mensal = meta_mensal.merge(dias_mes, on=["Ano", "Mes"], how="left")
+    meta_mensal["DiasUteis"] = meta_mensal["DiasUteis"].fillna(0)
+    meta_mensal["Meta Periodo Mes"] = meta_mensal["Meta Diaria"] * meta_mensal["DiasUteis"]
+
+    result = (
+        meta_mensal
+        .groupby(["Faccao", "Produto"])
+        .agg(
+            Meta_Periodo=("Meta Periodo Mes", "sum"),
+            Meta_Dia_Min=("Meta Diaria", "min"),
+            Meta_Dia_Max=("Meta Diaria", "max"),
+        )
+        .reset_index()
+        .rename(columns={
+            "Meta_Periodo": "Meta Periodo",
+            "Meta_Dia_Min": "Meta Dia Min",
+            "Meta_Dia_Max": "Meta Dia Max",
+        })
+    )
+    return result
 
 
 # ──────────────────────────────────────────────
@@ -240,20 +271,13 @@ def _remove_accents(text):
 
 
 def _infer_year(month: int, base_year: int) -> int:
-    """
-    Infere o ano a partir do mês usando o ano corrente como âncora.
-    Meses >= 10 pertencem ao base_year; meses < 10, ao ano seguinte.
-    Usa o ano atual do sistema em vez de hardcoded 2025.
-    """
     current_year = datetime.now().year
-    # Se base_year não foi informado explicitamente, usa o corrente
     if base_year is None:
         base_year = current_year
     return base_year if month >= 10 else base_year + 1
 
 
 def parse_date_header(h, base_year=None):
-    """Converte cabeçalho de coluna para date. Retorna None se não for data."""
     if base_year is None:
         base_year = datetime.now().year
 
@@ -274,19 +298,16 @@ def parse_date_header(h, base_year=None):
 
     h_norm = h_str.replace("-", "/")
 
-    # dd/mm/yyyy
     try:
         return datetime.strptime(h_norm, "%d/%m/%Y").date()
     except ValueError:
         pass
 
-    # dd/mm/yy
     try:
         return datetime.strptime(h_norm, "%d/%m/%y").date()
     except ValueError:
         pass
 
-    # d/m/yy  ou  d/m
     parts = h_norm.split("/")
     if len(parts) in (2, 3):
         try:
@@ -301,7 +322,6 @@ def parse_date_header(h, base_year=None):
         except (ValueError, TypeError):
             pass
 
-    # Abreviações em português (ex.: "01/out.")
     for abbr, month_num in _PT_MONTHS.items():
         if abbr in h_str.lower():
             match = re.search(r"(\d+)", h_str)
@@ -321,7 +341,6 @@ def parse_date_header(h, base_year=None):
 # ──────────────────────────────────────────────
 @st.cache_data(ttl=600)
 def load_all_data():
-    """Carrega todas as abas da planilha e retorna dict {empresa: DataFrame}."""
     import requests as req
 
     xlsx_data = None
@@ -352,9 +371,8 @@ def load_all_data():
 
 
 # ──────────────────────────────────────────────
-# PARSING DE ABAS — SUPORTE A MÚLTIPLOS BLOCOS MENSAIS
+# PARSING DE ABAS
 # ──────────────────────────────────────────────
-
 _HEADER_LABELS = frozenset([
     "FACCAO", "PRODUTO", "META DIARIA", "META MENSAL",
     "QTDE PRODUZIDA", "FALTA", "CLIENTE",
@@ -362,10 +380,6 @@ _HEADER_LABELS = frozenset([
 
 
 def _is_header_row(row_series) -> bool:
-    """
-    Retorna True se a linha contiver FACCAO ou PRODUTO,
-    indicando que é um cabeçalho de bloco.
-    """
     vals = row_series.astype(str).str.upper().tolist()
     for v in vals:
         v_clean = _remove_accents(v.strip())
@@ -375,11 +389,6 @@ def _is_header_row(row_series) -> bool:
 
 
 def _find_all_header_rows(raw) -> list[int]:
-    """
-    Varre o DataFrame bruto e retorna os índices de TODAS as
-    linhas de cabeçalho (linhas com FACCAO / PRODUTO).
-    Ignora linhas que são título de bloco (ex: "Cortex").
-    """
     header_rows = []
     for i in range(len(raw)):
         if _is_header_row(raw.iloc[i]):
@@ -388,16 +397,6 @@ def _find_all_header_rows(raw) -> list[int]:
 
 
 def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> list[dict]:
-    """
-    Processa um único bloco (um mês) e retorna lista de registros.
-
-    Parâmetros
-    ----------
-    raw_block : linhas de dados do bloco (sem a linha de cabeçalho)
-    headers   : lista de valores da linha de cabeçalho do bloco
-    sheet_name: nome da aba (usado como fallback de facção)
-    """
-    # ── Mapear colunas fixas ──
     col_idx: dict[str, int] = {}
     for idx, h in enumerate(headers):
         if h is None or str(h) == "nan":
@@ -415,20 +414,17 @@ def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> lis
               and "meta_diaria" not in col_idx):
             col_idx["meta_diaria"] = idx
 
-    # ── Mapear colunas de data ──
     date_cols: dict[int, date] = {}
     for idx, h in enumerate(headers):
         d = parse_date_header(h)
         if d is not None:
             date_cols[idx] = d
 
-    # Bloco inválido se não tem datas ou produto
     if not date_cols or "produto" not in col_idx:
         return []
 
     records = []
     for _, row in raw_block.iterrows():
-        # ── Facção ──
         if "faccao" in col_idx:
             fv = row.iloc[col_idx["faccao"]]
             if pd.isna(fv) or str(fv).strip() in ("", "nan", "None"):
@@ -439,7 +435,6 @@ def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> lis
         else:
             faccao = sheet_name.upper()
 
-        # ── Produto ──
         pv = row.iloc[col_idx["produto"]]
         if pd.isna(pv) or str(pv).strip() in ("", "nan", "None"):
             continue
@@ -447,7 +442,6 @@ def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> lis
         if _remove_accents(produto) in _HEADER_LABELS or produto in _HEADER_LABELS:
             continue
 
-        # ── Meta Diária ──
         meta_d = None
         if "meta_diaria" in col_idx:
             mv = row.iloc[col_idx["meta_diaria"]]
@@ -456,7 +450,6 @@ def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> lis
             except (ValueError, TypeError):
                 meta_d = None
 
-        # ── Quantidades por data ──
         for ci, dt in date_cols.items():
             try:
                 v = row.iloc[ci]
@@ -476,17 +469,6 @@ def _parse_block(raw_block: pd.DataFrame, headers: list, sheet_name: str) -> lis
 
 
 def _parse_sheet(raw: pd.DataFrame, sheet_name: str) -> pd.DataFrame | None:
-    """
-    Transforma uma aba em formato longo padronizado.
-
-    Suporta:
-    - Estrutura simples: um único bloco por aba (formato antigo)
-    - Múltiplos blocos mensais empilhados verticalmente (formato novo)
-
-    Cada bloco é identificado pela presença de uma linha de cabeçalho
-    contendo FACCAO / PRODUTO. Os blocos são separados por linhas em
-    branco ou pela linha de título da empresa (ex: "Cortex").
-    """
     header_rows = _find_all_header_rows(raw)
 
     if not header_rows:
@@ -495,15 +477,9 @@ def _parse_sheet(raw: pd.DataFrame, sheet_name: str) -> pd.DataFrame | None:
     all_records: list[dict] = []
 
     for block_num, header_idx in enumerate(header_rows):
-        # Limite inferior: próximo cabeçalho ou fim do DataFrame
         next_header = header_rows[block_num + 1] if block_num + 1 < len(header_rows) else len(raw)
-
         headers = raw.iloc[header_idx].tolist()
-
-        # Dados do bloco: entre o cabeçalho e o próximo (exclusive)
         block_data = raw.iloc[header_idx + 1 : next_header].reset_index(drop=True)
-
-        # Remover linhas completamente vazias dentro do bloco
         block_data = block_data.dropna(how="all").reset_index(drop=True)
 
         if block_data.empty:
@@ -518,25 +494,23 @@ def _parse_sheet(raw: pd.DataFrame, sheet_name: str) -> pd.DataFrame | None:
     df = pd.DataFrame(all_records)
     df["Data"] = pd.to_datetime(df["Data"])
 
-    # ── Deduplicar registros com mesma chave (Faccao, Produto, Data) ──
-    # Caso o mesmo par apareça em blocos sobrepostos, soma as quantidades
     df = (
         df.groupby(["Faccao", "Produto", "Data"], as_index=False)
         .agg({"Quantidade": "sum", "Meta Diaria": "first"})
     )
 
-    df["Ano"]      = df["Data"].dt.year
-    df["Mes"]      = df["Data"].dt.month
-    df["Mes Nome"] = df["Mes"].map(MESES_PT)
-    df["Dia"]      = df["Data"].dt.day
-    df["Semana"]   = df["Data"].dt.isocalendar().week.astype(int)
-    df["DiaSemana"]= df["Data"].dt.day_name()
+    df["Ano"]       = df["Data"].dt.year
+    df["Mes"]       = df["Data"].dt.month
+    df["Mes Nome"]  = df["Mes"].map(MESES_PT)
+    df["Dia"]       = df["Data"].dt.day
+    df["Semana"]    = df["Data"].dt.isocalendar().week.astype(int)
+    df["DiaSemana"] = df["Data"].dt.day_name()
 
     return df
 
 
 # ──────────────────────────────────────────────
-# Callbacks de filtro – cascata Ano → Mês → Datas
+# Callbacks de filtro
 # ──────────────────────────────────────────────
 def _on_home_ano_change():
     for k in ("home_mes", "home_dia", "home_ini", "home_fim"):
@@ -756,7 +730,6 @@ def render_home(all_data):
         empresas_disp = sorted(df_prod_full["Empresa"].unique())
         produtos_disp_all = sorted(df_prod_full["Produto"].unique())
 
-        # ── CSS para o painel de filtros ──
         st.markdown("""
         <style>
         .filtro-treemap-card {
@@ -767,69 +740,35 @@ def render_home(all_data):
             margin-bottom: 16px;
         }
         .filtro-treemap-header {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-bottom: 10px;
-            color: #FFFFFF;
-            font-size: 0.78rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+            color: #FFFFFF; font-size: 0.78rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 1px;
         }
         .filtro-treemap-header span {
-            display: inline-block;
-            width: 18px; height: 2px;
-            background: #FFFFFF;
-            border-radius: 2px;
+            display: inline-block; width: 18px; height: 2px;
+            background: #FFFFFF; border-radius: 2px;
         }
         .filtro-treemap-card label {
-            color: #8899AA !important;
-            font-size: 0.72rem !important;
-            font-weight: 600 !important;
-            text-transform: uppercase !important;
+            color: #8899AA !important; font-size: 0.72rem !important;
+            font-weight: 600 !important; text-transform: uppercase !important;
             letter-spacing: 0.6px !important;
         }
-        .filtro-treemap-card span[data-baseweb="tag"] {
-            background-color: rgba(255,255,255,0.08) !important;
-            border: 1px solid rgba(255,255,255,0.2) !important;
-            color: #FFFFFF !important;
-            border-radius: 6px !important;
-            font-size: 0.75rem !important;
-            padding: 1px 8px !important;
-            height: 22px !important;
-        }
-        .filtro-treemap-card [data-baseweb="select"] > div {
-            background-color: rgba(255,255,255,0.04) !important;
-            border-color: rgba(255,255,255,0.08) !important;
-            border-radius: 8px !important;
-            min-height: 38px !important;
-        }
-        /* Seletor global para tags dos multiselects do painel de filtros */
         span[data-baseweb="tag"] {
             background-color: rgba(255,255,255,0.08) !important;
             border: 1px solid rgba(255,255,255,0.2) !important;
-            color: #FFFFFF !important;
-            border-radius: 6px !important;
+            color: #FFFFFF !important; border-radius: 6px !important;
             font-size: 0.9rem !important;
         }
-        span[data-baseweb="tag"] span {
-            color: #FFFFFF !important;
-            font-size: 0.9rem !important;
-        }
+        span[data-baseweb="tag"] span { color: #FFFFFF !important; font-size: 0.9rem !important; }
         </style>
         """, unsafe_allow_html=True)
 
-        # ── Painel de filtros ──
         st.markdown('<div class="filtro-treemap-card">', unsafe_allow_html=True)
         st.markdown(
-            '<div class="filtro-treemap-header">'
-            '<span></span> Filtros do Gráfico <span></span>'
-            '</div>',
+            '<div class="filtro-treemap-header"><span></span> Filtros do Gráfico <span></span></div>',
             unsafe_allow_html=True,
         )
 
-        # ── Processa reset ANTES de renderizar os widgets ──
         if st.session_state.pop("_tree_reset", False):
             st.session_state["tree_empresas"] = []
             st.session_state["tree_produtos"] = []
@@ -838,45 +777,31 @@ def render_home(all_data):
 
         with col_fe:
             sel_emp_tree = st.multiselect(
-                "🏭  Empresas",
-                empresas_disp,
-                default=[],
-                key="tree_empresas",
+                "🏭  Empresas", empresas_disp, default=[], key="tree_empresas",
                 placeholder="Selecione empresas...",
-                label_visibility="visible",
             )
 
         with col_fp:
-            # Se nenhuma empresa selecionada, lista todos os produtos disponíveis
             base_emp = sel_emp_tree if sel_emp_tree else empresas_disp
             produtos_disp = sorted(
                 df_prod_full[df_prod_full["Empresa"].isin(base_emp)]["Produto"].unique()
             )
             sel_prod_tree = st.multiselect(
-                "📦  Produtos",
-                produtos_disp,
-                default=[],
-                key="tree_produtos",
+                "📦  Produtos", produtos_disp, default=[], key="tree_produtos",
                 placeholder="Selecione produtos...",
-                label_visibility="visible",
             )
 
         with col_clear:
             st.markdown("<div style='height:22px'></div>", unsafe_allow_html=True)
-            if st.button("✕ Limpar", key="tree_clear",
-                         help="Resetar filtros do gráfico", use_container_width=True):
+            if st.button("✕ Limpar", key="tree_clear", help="Resetar filtros do gráfico", use_container_width=True):
                 st.session_state["_tree_reset"] = True
                 st.rerun()
 
-        # Resolve o que exibir: seleção ou tudo se vazio
         emp_ativas  = sel_emp_tree  if sel_emp_tree  else empresas_disp
         prod_ativos = sel_prod_tree if sel_prod_tree else produtos_disp
 
-        # Contador
-        n_emp    = len(emp_ativas)
-        n_prod   = len(prod_ativos)
-        total_emp  = len(empresas_disp)
-        total_prod = len(produtos_disp_all)
+        n_emp = len(emp_ativas); n_prod = len(prod_ativos)
+        total_emp = len(empresas_disp); total_prod = len(produtos_disp_all)
         filtro_msg = (
             "Sem filtro ativo — exibindo tudo"
             if not sel_emp_tree and not sel_prod_tree
@@ -889,7 +814,6 @@ def render_home(all_data):
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # ── Treemap filtrado ──
         df_prod = df_prod_full[
             df_prod_full["Empresa"].isin(emp_ativas) &
             df_prod_full["Produto"].isin(prod_ativos)
@@ -1033,7 +957,6 @@ def render_company(empresa, df, all_data):
     # ─── Tab 1 ────────────────────────────────────────────────────
     with tab_vis:
         serie = df_f.groupby("Data", as_index=False)["Quantidade"].sum().sort_values("Data")
-        # Meta diária varia por mês — mapeia cada data ao seu valor correto
         serie["Meta Dia"] = serie["Data"].map(meta_por_data).fillna(0)
         serie["Acum. Produzido"] = serie["Quantidade"].cumsum()
         serie["Acum. Meta"] = serie["Meta Dia"].cumsum()
@@ -1089,29 +1012,21 @@ def render_company(empresa, df, all_data):
 
     # ─── Tab 2 ────────────────────────────────────────────────────
     with tab_facc:
-        tbl = df_f.groupby("Faccao", as_index=False).agg(
+        # ── Agrupamento por Facção + Produto (uma linha por combinação) ──
+        tbl = df_f.groupby(["Faccao", "Produto"], as_index=False).agg(
             Produzido=("Quantidade", "sum"),
             Dias=("Data", "nunique"),
         )
 
-        # ── Produtos por facção ──
-        produtos_por_faccao = (
-            df_f.groupby("Faccao")["Produto"]
-            .apply(lambda x: ", ".join(sorted(x.unique())))
-            .reset_index()
-            .rename(columns={"Produto": "Produtos"})
-        )
-        tbl = tbl.merge(produtos_por_faccao, on="Faccao", how="left")
-
-        # ── Meta por facção vinda de _calc_meta (já correto por mês) ──
-        _, _, meta_fac_df = _calc_meta(df_f, list(tbl["Faccao"].unique()))
-        tbl = tbl.merge(meta_fac_df, on="Faccao", how="left")
+        # ── Meta por (Faccao, Produto) ──
+        meta_prod_df = _calc_meta_por_produto(df_f, list(tbl["Faccao"].unique()))
+        tbl = tbl.merge(meta_prod_df, on=["Faccao", "Produto"], how="left")
         tbl["Meta Periodo"] = tbl["Meta Periodo"].fillna(0)
         tbl["Meta Dia Min"]  = tbl["Meta Dia Min"].fillna(0)
         tbl["Meta Dia Max"]  = tbl["Meta Dia Max"].fillna(0)
 
-        # Meta Dia: se min == max → valor fixo; se diferente → mostra faixa "X — Y"
         meses_selecionados = df_f["Mes"].nunique()
+
         def _fmt_meta_dia(row):
             if row["Meta Dia Min"] == row["Meta Dia Max"]:
                 return f"{row['Meta Dia Max']:,.0f}".replace(",", ".")
@@ -1126,14 +1041,29 @@ def render_company(empresa, df, all_data):
         )
         tbl["Saldo"]     = tbl["Produzido"] - tbl["Meta Periodo"]
         tbl["Media/Dia"] = np.where(tbl["Dias"] > 0, tbl["Produzido"] / tbl["Dias"], 0)
-        tbl = tbl.sort_values("Ating. %", ascending=False)
+        tbl = tbl.sort_values(["Faccao", "Produto"])
 
-        st.markdown("### Resumo por Facção")
+        # ── Tabela agregada por facção (usada nos gráficos e alertas) ──
+        _, _, meta_fac_df = _calc_meta(df_f, sel_facs)
+        tbl_fac = df_f.groupby("Faccao", as_index=False).agg(
+            Produzido=("Quantidade", "sum"),
+            Dias=("Data", "nunique"),
+        ).merge(meta_fac_df, on="Faccao", how="left")
+        tbl_fac["Meta Periodo"] = tbl_fac["Meta Periodo"].fillna(0)
+        tbl_fac["Ating. %"] = np.where(
+            tbl_fac["Meta Periodo"] > 0,
+            tbl_fac["Produzido"] / tbl_fac["Meta Periodo"] * 100, 0
+        )
+        tbl_fac["Saldo"] = tbl_fac["Produzido"] - tbl_fac["Meta Periodo"]
+        tbl_fac = tbl_fac.sort_values("Ating. %", ascending=False)
+
+        st.markdown("### Resumo por Facção / Produto")
         if meses_selecionados > 1:
             st.caption("ℹ️ **Meta Dia**: valor fixo quando igual em todos os meses selecionados; faixa *mín — máx* quando varia.")
+
         _fmt_int = lambda v: f"{v:,.0f}".replace(",", ".")
         tbl_display = tbl[[
-            "Faccao", "Produtos", "Produzido", "Dias",
+            "Faccao", "Produto", "Produzido", "Dias",
             "Meta Dia", "Meta Periodo", "Ating. %", "Saldo", "Media/Dia"
         ]].rename(columns={
             "Faccao": "Facção",
@@ -1156,12 +1086,12 @@ def render_company(empresa, df, all_data):
                 fig_ating = go.Figure()
                 cores_at = [
                     "#22c55e" if a >= 100 else "#f97316" if a >= 80 else "#ef4444"
-                    for a in tbl["Ating. %"]
+                    for a in tbl_fac["Ating. %"]
                 ]
                 fig_ating.add_bar(
-                    y=tbl["Faccao"], x=tbl["Ating. %"], orientation="h",
+                    y=tbl_fac["Faccao"], x=tbl_fac["Ating. %"], orientation="h",
                     marker_color=cores_at,
-                    text=[f"{a:.1f}%" for a in tbl["Ating. %"]], textposition="outside",
+                    text=[f"{a:.1f}%" for a in tbl_fac["Ating. %"]], textposition="outside",
                 )
                 fig_ating.add_vline(x=100, line_dash="dash", line_color="#facc15")
                 fig_ating.update_layout(
@@ -1171,7 +1101,7 @@ def render_company(empresa, df, all_data):
                 st.plotly_chart(fig_ating, width="stretch")
             else:
                 fig_vol = px.bar(
-                    tbl.sort_values("Produzido", ascending=True),
+                    tbl_fac.sort_values("Produzido", ascending=True),
                     y="Faccao", x="Produzido", orientation="h", text="Produzido",
                     color_discrete_sequence=[cor], title="Volume Produzido por Facção",
                     template="plotly_dark",
@@ -1183,13 +1113,13 @@ def render_company(empresa, df, all_data):
         with col_f2:
             if tem_meta:
                 fig_tree = px.treemap(
-                    tbl, path=["Faccao"], values="Produzido", color="Ating. %",
+                    tbl_fac, path=["Faccao"], values="Produzido", color="Ating. %",
                     color_continuous_scale="RdYlGn", range_color=[50, 120],
                     title="Participação no Volume (cor = ating. %)", template="plotly_dark",
                 )
             else:
                 fig_tree = px.treemap(
-                    tbl, path=["Faccao"], values="Produzido", color="Produzido",
+                    tbl_fac, path=["Faccao"], values="Produzido", color="Produzido",
                     color_continuous_scale=[[0, "#1A3A4A"], [1, cor]],
                     title="Participação no Volume Total", template="plotly_dark",
                 )
@@ -1263,7 +1193,7 @@ def render_company(empresa, df, all_data):
         st.markdown("---")
         st.markdown("### Facções com Produção Abaixo de 70% da Meta")
         if tem_meta:
-            alerta = tbl[tbl["Ating. %"] < 70][
+            alerta = tbl_fac[tbl_fac["Ating. %"] < 70][
                 ["Faccao", "Produzido", "Meta Periodo", "Ating. %", "Saldo"]
             ]
             if alerta.empty:
@@ -1299,7 +1229,7 @@ def render_company(empresa, df, all_data):
         df_view = df_view.sort_values(["Data", "Faccao"], ascending=[False, True])
         df_view["Data"] = df_view["Data"].dt.strftime("%d/%m/%Y")
         df_view = df_view.rename(columns={"Faccao": "Facção", "Meta Diaria": "Meta Diária"})
-        _fmt_int  = lambda v: f"{v:,.0f}".replace(",", ".") if pd.notna(v) and v is not None else "-"
+        _fmt_int = lambda v: f"{v:,.0f}".replace(",", ".") if pd.notna(v) and v is not None else "-"
         st.dataframe(
             df_view.reset_index(drop=True).style.format({
                 "Quantidade": _fmt_int, "Meta Diária": _fmt_int,
