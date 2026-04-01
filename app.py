@@ -382,8 +382,9 @@ _HEADER_LABELS = frozenset([
 def _is_header_row(row_series) -> bool:
     vals = row_series.astype(str).str.upper().tolist()
     for v in vals:
-        v_clean = _remove_accents(v.strip())
-        if "FACCAO" in v_clean or v.strip() == "PRODUTO":
+        v = str(v).strip()
+        v_clean = _remove_accents(v)
+        if "FACCAO" in v_clean or v == "PRODUTO":
             return True
     return False
 
