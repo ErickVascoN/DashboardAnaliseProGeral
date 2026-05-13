@@ -132,8 +132,50 @@ def fmt_br(v, decimals=0):
 
 
 def dias_uteis(datas):
+    """Calcula dias úteis (segunda a sexta) sem considerar sábados."""
     d = pd.to_datetime(datas).dropna().dt.normalize().drop_duplicates()
     return int((d.dt.weekday <= 4).sum())
+
+
+def dias_uteis_com_sabados_trabalhados(df_completo, faccao, produto=None):
+    """
+    Calcula dias para uma facção/produto:
+    - TODOS os dias úteis (seg-sex) do período (mesmo sem produção)
+    - MAIS os sábados onde houve produção naquele dia
+    """
+    # Dias úteis do período completo (seg-sex)
+    dias_seg_sex_periodo = dias_uteis(df_completo["Data"])
+    
+    # Sábados com produção para esta facção/produto
+    if produto is not None:
+        grupo = df_completo[(df_completo["Faccao"] == faccao) & 
+                            (df_completo["Produto"] == produto) & 
+                            (df_completo["Quantidade"] > 0)]
+    else:
+        grupo = df_completo[(df_completo["Faccao"] == faccao) & 
+                            (df_completo["Quantidade"] > 0)]
+    
+    datas_grupo = pd.to_datetime(grupo["Data"]).dropna().dt.normalize().drop_duplicates()
+    sabados_com_trabalho = (datas_grupo.dt.weekday == 5).sum()
+    
+    return dias_seg_sex_periodo + sabados_com_trabalho
+
+
+def dias_uteis_com_trabalho(datas):
+    """
+    Calcula dias úteis exclusivamente de segunda a sexta,
+    mas inclui sábados APENAS se houve produção naquele dia.
+    Sábados sem produção não são contados.
+    """
+    d = pd.to_datetime(datas).dropna().dt.normalize().drop_duplicates()
+    
+    # Contar dias de segunda a sexta (weekday 0-4)
+    dias_seg_sex = (d.dt.weekday <= 4).sum()
+    
+    # Contar sábados (weekday 5) que têm produção
+    dias_sabado_com_prod = (d.dt.weekday == 5).sum()
+    
+    return int(dias_seg_sex + dias_sabado_com_prod)
 
 
 def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
@@ -159,7 +201,7 @@ def _calc_meta(df_f: pd.DataFrame, sel_facs: list) -> tuple:
 
     dias_mes = (
         df_sel.groupby(["Ano", "Mes"])["Data"]
-        .apply(dias_uteis)
+        .apply(dias_uteis_com_trabalho)
         .reset_index()
         .rename(columns={"Data": "DiasUteis"})
     )
@@ -218,7 +260,7 @@ def _calc_meta_por_produto(df_f: pd.DataFrame, sel_facs: list) -> pd.DataFrame:
 
     dias_mes = (
         df_sel.groupby(["Ano", "Mes"])["Data"]
-        .apply(dias_uteis)
+        .apply(dias_uteis_com_trabalho)
         .reset_index()
         .rename(columns={"Data": "DiasUteis"})
     )
@@ -928,7 +970,7 @@ def render_company(empresa, df, all_data):
         return
 
     prod_total = df_f["Quantidade"].sum()
-    d_uteis = dias_uteis(df_f["Data"])
+    d_uteis = dias_uteis_com_trabalho(df_f["Data"])
     media_dia = prod_total / d_uteis if d_uteis else 0
 
     meta_periodo, meta_por_data, meta_por_faccao = _calc_meta(df_f, sel_facs)
@@ -1018,8 +1060,16 @@ def render_company(empresa, df, all_data):
         # ── Agrupamento por Facção + Produto (uma linha por combinação) ──
         tbl = df_f.groupby(["Faccao", "Produto"], as_index=False).agg(
             Produzido=("Quantidade", "sum"),
-            Dias=("Data", "nunique"),
         )
+        
+        # ── Contar dias: TODOS úteis + sábados trabalhados ──
+        dias_list = []
+        for (fac, prod), group in df_f.groupby(["Faccao", "Produto"]):
+            dias_calc = dias_uteis_com_sabados_trabalhados(df_f, fac, prod)
+            dias_list.append({"Faccao": fac, "Produto": prod, "Dias": dias_calc})
+        dias_por_faccao_produto = pd.DataFrame(dias_list)
+        
+        tbl = tbl.merge(dias_por_faccao_produto, on=["Faccao", "Produto"], how="left")
 
         # ── Meta por (Faccao, Produto) ──
         meta_prod_df = _calc_meta_por_produto(df_f, list(tbl["Faccao"].unique()))
@@ -1048,10 +1098,17 @@ def render_company(empresa, df, all_data):
 
         # ── Tabela agregada por facção (usada nos gráficos e alertas) ──
         _, _, meta_fac_df = _calc_meta(df_f, sel_facs)
+        
+        # ── Contar dias: TODOS úteis + sábados trabalhados (por facção) ──
+        dias_fac_list = []
+        for fac, group in df_f.groupby("Faccao"):
+            dias_calc = dias_uteis_com_sabados_trabalhados(df_f, fac)
+            dias_fac_list.append({"Faccao": fac, "Dias": dias_calc})
+        dias_por_faccao = pd.DataFrame(dias_fac_list)
+        
         tbl_fac = df_f.groupby("Faccao", as_index=False).agg(
             Produzido=("Quantidade", "sum"),
-            Dias=("Data", "nunique"),
-        ).merge(meta_fac_df, on="Faccao", how="left")
+        ).merge(dias_por_faccao, on="Faccao", how="left").merge(meta_fac_df, on="Faccao", how="left")
         tbl_fac["Meta Periodo"] = tbl_fac["Meta Periodo"].fillna(0)
         tbl_fac["Ating. %"] = np.where(
             tbl_fac["Meta Periodo"] > 0,
