@@ -383,7 +383,7 @@ def parse_date_header(h, base_year=None):
 # ──────────────────────────────────────────────
 # CARREGAMENTO DOS DADOS
 # ──────────────────────────────────────────────
-@st.cache_data(ttl=600)
+@st.cache_data(ttl=300)
 def load_all_data():
     import requests as req
 
